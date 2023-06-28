@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
 
 	"C"
 
@@ -28,24 +27,15 @@ import (
 	rhttp "github.com/hashicorp/go-retryablehttp"
 )
 
-//export out_deepfence_plugin
-var Out_deepfence_plugin plugin = plugin{
-	Name:        "out_deepfence",
-	Description: "ok",
-	cb_init:     nil,
-	cb_pre_run:  nil,
-}
-
-type plugin struct {
-	Name        string
-	Description string
-	cb_init     func()
-	cb_pre_run  func()
-}
+import (
+	"sync"
+	"unsafe"
+)
 
 var (
-	cfg      map[string]Config
+	plugins  *sync.Map
 	hc       *http.Client
+	hc_setup sync.Mutex
 	instance int = 0
 )
 
@@ -204,63 +194,60 @@ func validateTokens(cfg Config) (Config, bool, error) {
 	}
 }
 
-//export FLBPluginRegister
-func FLBPluginRegister(def unsafe.Pointer) int {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	return output.FLBPluginRegister(def, "deepfence", "deepfence output plugin")
-}
-
 //export FLBPluginInit
-func FLBPluginInit(plugin unsafe.Pointer) int {
-	if cfg == nil {
-		cfg = make(map[string]Config)
+func FLBPluginInit(cid, chost, cport, cpath, cschema, capiToken, ccertPath, ccertKey *C.char) int {
+	if plugins == nil {
+		plugins = &sync.Map{}
 	}
+	id := C.GoString(cid)
+	host := C.GoString(chost)
+	port := C.GoString(cport)
+	path := C.GoString(cpath)
+	schema := C.GoString(cschema)
+	apiToken := C.GoString(capiToken)
+	certPath := C.GoString(ccertPath)
+	certKey := C.GoString(ccertKey)
 
-	id := output.FLBPluginConfigKey(plugin, "id")
-	host := output.FLBPluginConfigKey(plugin, "console_host")
-	port := output.FLBPluginConfigKey(plugin, "console_port")
-	path := output.FLBPluginConfigKey(plugin, "path")
-	schema := output.FLBPluginConfigKey(plugin, "schema")
-	apiToken := output.FLBPluginConfigKey(plugin, "token")
-	certPath := output.FLBPluginConfigKey(plugin, "cert_file")
-	certKey := output.FLBPluginConfigKey(plugin, "key_file")
 	log.Printf("id=%s schema=%s host=%s port=%s path=%s",
 		id, schema, host, port, path)
 
 	// setup http client
-	tlsConfig := &tls.Config{RootCAs: x509.NewCertPool(), InsecureSkipVerify: true}
-	rhc := rhttp.NewClient()
-	rhc.HTTPClient.Timeout = 10 * time.Second
-	rhc.RetryMax = 3
-	rhc.RetryWaitMin = 1 * time.Second
-	rhc.RetryWaitMax = 10 * time.Second
-	rhc.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
-		if err != nil || resp == nil {
-			return false, err
-		}
-		if resp.StatusCode == http.StatusServiceUnavailable {
-			return false, err
-		}
-		return rhttp.DefaultRetryPolicy(ctx, resp, err)
-	}
-	rhc.Logger = log.New(os.Stderr, "", log.LstdFlags|log.Lshortfile)
-	if schema == "https" {
-		if len(certPath) > 0 && len(certKey) > 0 {
-			cer, err := tls.LoadX509KeyPair(certPath, certKey)
-			if err != nil {
-				log.Printf("error loading certs %s", err)
-				return output.FLB_ERROR
+	hc_setup.Lock()
+	defer hc_setup.Unlock()
+	if hc == nil {
+		tlsConfig := &tls.Config{RootCAs: x509.NewCertPool(), InsecureSkipVerify: true}
+		rhc := rhttp.NewClient()
+		rhc.HTTPClient.Timeout = 10 * time.Second
+		rhc.RetryMax = 3
+		rhc.RetryWaitMin = 1 * time.Second
+		rhc.RetryWaitMax = 10 * time.Second
+		rhc.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
+			if err != nil || resp == nil {
+				return false, err
 			}
-			tlsConfig.Certificates = []tls.Certificate{cer}
+			if resp.StatusCode == http.StatusServiceUnavailable {
+				return false, err
+			}
+			return rhttp.DefaultRetryPolicy(ctx, resp, err)
 		}
-		tr := &http.Transport{
-			TLSClientConfig:   tlsConfig,
-			DisableKeepAlives: false,
+		rhc.Logger = log.New(os.Stderr, "", log.LstdFlags|log.Lshortfile)
+		if schema == "https" {
+			if len(certPath) > 0 && len(certKey) > 0 {
+				cer, err := tls.LoadX509KeyPair(certPath, certKey)
+				if err != nil {
+					log.Printf("error loading certs %s", err)
+					return output.FLB_ERROR
+				}
+				tlsConfig.Certificates = []tls.Certificate{cer}
+			}
+			tr := &http.Transport{
+				TLSClientConfig:   tlsConfig,
+				DisableKeepAlives: false,
+			}
+			rhc.HTTPClient = &http.Client{Transport: tr}
 		}
-		rhc.HTTPClient = &http.Client{Transport: tr}
+		hc = rhc.StandardClient()
 	}
-
-	hc = rhc.StandardClient()
 
 	if dschttp.IsConsoleAgent(host) && strings.Trim(apiToken, "\"") == "" {
 		internalURL := os.Getenv("MGMT_CONSOLE_URL_INTERNAL")
@@ -281,36 +268,32 @@ func FLBPluginInit(plugin unsafe.Pointer) int {
 		instance = instance + 1
 	}
 
-	cfg[id] = Config{
+	pushed, _ := plugins.LoadOrStore(id, Config{
 		ConsoleURL:   getURL(schema, host, port),
 		URL:          getURLWithPath(schema, host, port, path),
 		Key:          apiToken,
 		AccessToken:  access,
 		RefreshToken: refresh,
-	}
+	})
 
 	log.Printf("api token set %t for id %s", apiToken != "", id)
-	log.Printf("push to url %s", cfg[id].URL)
+	log.Printf("setup for url %s", pushed.(Config).URL)
 
-	output.FLBPluginSetContext(plugin, id)
+	//output.FLBPluginSetContext(plugin, id)
 
-	return output.FLB_OK
-}
-
-//export FLBPluginFlush
-func FLBPluginFlush(data unsafe.Pointer, length C.int, tag *C.char) int {
-	log.Printf("flush called on unknown instance")
 	return output.FLB_OK
 }
 
 //export FLBPluginFlushCtx
-func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int {
-	id := output.FLBPluginGetContext(ctx).(string)
-	idCfg, ok := cfg[id]
+func FLBPluginFlushCtx(cid *C.char, data unsafe.Pointer, length C.int) int {
+	id := C.GoString(cid)
+	e, ok := plugins.Load(id)
 	if !ok {
 		log.Printf("push to unknown id topic %s", id)
 		return output.FLB_ERROR
 	}
+	idCfg := e.(Config)
+	log.Printf("pushing to url %s", idCfg.URL)
 
 	newConfig, changed, err := validateTokens(idCfg)
 	if err != nil {
@@ -319,7 +302,7 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 	}
 	if changed {
 		idCfg = newConfig
-		cfg[id] = newConfig
+		plugins.Store(id, newConfig)
 	}
 
 	// fluent-bit decoder
@@ -382,30 +365,6 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 	}
 
 	return output.FLB_OK
-}
-
-//export FLBPluginExit
-func FLBPluginExit() int {
-	log.Printf("exit called on unknown instance")
-	return output.FLB_OK
-}
-
-//export FLBPluginExitCtx
-func FLBPluginExitCtx(ctx unsafe.Pointer) int {
-	id := output.FLBPluginGetContext(ctx).(string)
-	_, ok := cfg[id]
-	if !ok {
-		log.Printf("exit called on unknown id topic %s", id)
-		return output.FLB_ERROR
-	}
-	log.Printf("exit called on id topic %s", id)
-	return output.FLB_OK
-}
-
-//export FLBPluginUnregister
-func FLBPluginUnregister(ctx unsafe.Pointer) {
-	log.Print("unregister called")
-	output.FLBPluginUnregister(ctx)
 }
 
 func main() {}
