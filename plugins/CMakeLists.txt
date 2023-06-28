@@ -308,6 +308,7 @@ if (NOT CMAKE_SYSTEM_NAME MATCHES "Windows")
   REGISTER_OUT_PLUGIN("out_plot")
 endif()
 
+REGISTER_OUT_PLUGIN("out_deepfence")
 REGISTER_OUT_PLUGIN("out_pgsql")
 REGISTER_OUT_PLUGIN("out_retry")
 REGISTER_OUT_PLUGIN("out_skywalking")
