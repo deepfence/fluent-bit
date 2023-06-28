@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"C"
+
 	"github.com/fluent/fluent-bit-go/output"
 
 	deepfenceUtils "github.com/deepfence/ThreatMapper/deepfence_utils/utils"
@@ -26,6 +27,21 @@ import (
 	dschttp "github.com/deepfence/golang_deepfence_sdk/utils/http"
 	rhttp "github.com/hashicorp/go-retryablehttp"
 )
+
+//export out_deepfence_plugin
+var Out_deepfence_plugin plugin = plugin{
+	Name:        "out_deepfence",
+	Description: "ok",
+	cb_init:     nil,
+	cb_pre_run:  nil,
+}
+
+type plugin struct {
+	Name        string
+	Description string
+	cb_init     func()
+	cb_pre_run  func()
+}
 
 var (
 	cfg      map[string]Config
