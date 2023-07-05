@@ -20,14 +20,14 @@ static int cb_deepfence_init(
     }
 
 	FLBPluginInit(
-		(char*)flb_output_get_property("id", ins),
-		(char*)flb_output_get_property("console_host", ins),
-		(char*)flb_output_get_property("console_port", ins),
-		(char*)flb_output_get_property("path", ins),
-		(char*)flb_output_get_property("schema", ins),
-		(char*)flb_output_get_property("token", ins),
-		(char*)flb_output_get_property("cert_file", ins),
-		(char*)flb_output_get_property("key_file", ins)
+		(char*)flb_output_get_property("dfhost", ins),
+		(char*)flb_output_get_property("dfport", ins),
+		(char*)flb_output_get_property("dfpath", ins),
+		(char*)flb_output_get_property("dftopic", ins),
+		(char*)flb_output_get_property("dfschema", ins),
+		(char*)flb_output_get_property("dfkey", ins),
+		(char*)flb_output_get_property("dfcertpath", ins),
+		(char*)flb_output_get_property("dfcertkey", ins)
 	);
 
     /* Export context */
@@ -68,34 +68,34 @@ static int cb_deepfence_exit(void *data, struct flb_config *config)
 /* Configuration properties map */
 static struct flb_config_map config_map[] = {
     {
-     FLB_CONFIG_MAP_STR, "id", NULL,
+     FLB_CONFIG_MAP_STR, "dftopic", NULL,
      0, FLB_FALSE, 0,
-     "Unique Id config"
+     "Unique topic config"
     },
     {
-     FLB_CONFIG_MAP_STR, "schema", NULL,
+     FLB_CONFIG_MAP_STR, "dfschema", NULL,
      0, FLB_FALSE, 0,
      "Schema used for accessing console URL"
     },
     {
-     FLB_CONFIG_MAP_STR, "console_host", NULL,
+     FLB_CONFIG_MAP_STR, "dfhost", NULL,
      0, FLB_FALSE, 0,
-     "Host URL"
+     "Management Console Host"
     },
     {
-     FLB_CONFIG_MAP_STR, "console_port", NULL,
+     FLB_CONFIG_MAP_STR, "dfport", NULL,
      0, FLB_FALSE, 0,
-     "Port URL"
+     "Management Console Port"
     },
     {
-     FLB_CONFIG_MAP_STR, "path", NULL,
+     FLB_CONFIG_MAP_STR, "dfpath", NULL,
      0, FLB_FALSE, 0,
      "Path to listen"
     },
     {
-     FLB_CONFIG_MAP_STR, "token", NULL,
+     FLB_CONFIG_MAP_STR, "dfkey", NULL,
      0, FLB_FALSE, 0,
-     "API token from console"
+     "API key from console"
     },
     /* EOF */
     {0}
