@@ -1,35 +1,54 @@
 package main
 
 import (
-	"C"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
-	"unsafe"
+
+	"C"
 
 	"github.com/fluent/fluent-bit-go/output"
+
 	rhttp "github.com/hashicorp/go-retryablehttp"
 )
 
-var (
-	cfg      map[string]Config
-	client       = rhttp.NewClient()
-	instance int = 0
+import (
+	"io/ioutil"
+	"sync"
+	"unsafe"
 )
+
+var (
+	plugins  sync.Map
+	rhc      *rhttp.Client
+	hc_setup sync.Mutex
+)
+
+func init() {
+	plugins = sync.Map{}
+}
 
 type Config struct {
 	URL string
 	Key string
+}
+
+func getURLWithPath(schema, host, port, path string) string {
+	u := &url.URL{
+		Scheme: schema,
+		Host:   net.JoinHostPort(host, port),
+		Path:   path,
+	}
+	return u.String()
 }
 
 func getURL(schema, host, port, path, topic string) string {
@@ -66,8 +85,6 @@ func parseValue(value interface{}) interface{} {
 	}
 }
 
-// data needs to be in this format
-// {"records":[{"value":<record1>},{"value":record2}]}
 func toKafkaRestFormat(data []map[string]interface{}) *bytes.Buffer {
 	values := make([]string, len(data))
 	for i, u := range data {
@@ -82,79 +99,76 @@ func toKafkaRestFormat(data []map[string]interface{}) *bytes.Buffer {
 	return bytes.NewBuffer([]byte("{\"records\":[" + result + "]}"))
 }
 
-//export FLBPluginRegister
-func FLBPluginRegister(def unsafe.Pointer) int {
-	return output.FLBPluginRegister(def, "deepfence", "deepfence output plugin")
-}
-
 //export FLBPluginInit
-func FLBPluginInit(plugin unsafe.Pointer) int {
-	if cfg == nil {
-		cfg = make(map[string]Config)
-	}
+func FLBPluginInit(ctopic, chost, cport, cpath, cschema, ckey, ccertPath, ccertKey *C.char) int {
+	topic := C.GoString(ctopic)
+	host := C.GoString(chost)
+	port := C.GoString(cport)
+	path := C.GoString(cpath)
+	schema := C.GoString(cschema)
+	certPath := C.GoString(ccertPath)
+	certKey := C.GoString(ccertKey)
+	key := C.GoString(ckey)
 
-	host := output.FLBPluginConfigKey(plugin, "dfhost")
-	port := output.FLBPluginConfigKey(plugin, "dfport")
-	path := output.FLBPluginConfigKey(plugin, "dfpath")
-	topic := output.FLBPluginConfigKey(plugin, "dftopic")
-	schema := output.FLBPluginConfigKey(plugin, "dfschema")
-	key := output.FLBPluginConfigKey(plugin, "dfkey")
-	certPath := output.FLBPluginConfigKey(plugin, "dfcertpath")
-	certKey := output.FLBPluginConfigKey(plugin, "dfcertkey")
-	log.Printf("[deepfence] schema=%s host=%s port=%s path=%s topic=%s plugin=%s",
-		schema, host, port, path, topic, certPath)
+	log.Printf("id=%s schema=%s host=%s port=%s path=%s",
+		topic, schema, host, port, path)
 
 	// setup http client
-	tlsConfig := &tls.Config{RootCAs: x509.NewCertPool(), InsecureSkipVerify: true}
-	client.HTTPClient.Timeout = 10 * time.Second
-	client.RetryMax = 3
-	client.RetryWaitMin = 1 * time.Second
-	client.RetryWaitMax = 10 * time.Second
-	client.Logger = nil
-	if schema == "https" {
-		if len(certPath) > 0 && len(certKey) > 0 {
-			cer, err := tls.LoadX509KeyPair(certPath, certKey)
-			if err != nil {
-				log.Printf("[deepfence] error loading certs %s", err)
-				return output.FLB_ERROR
+	hc_setup.Lock()
+	defer hc_setup.Unlock()
+	if rhc == nil {
+		rhc = rhttp.NewClient()
+		tlsConfig := &tls.Config{RootCAs: x509.NewCertPool(), InsecureSkipVerify: true}
+		rhc.HTTPClient.Timeout = 10 * time.Second
+		rhc.RetryMax = 3
+		rhc.RetryWaitMin = 1 * time.Second
+		rhc.RetryWaitMax = 10 * time.Second
+		rhc.CheckRetry = func(ctx context.Context, resp *http.Response, err error) (bool, error) {
+			if err != nil || resp == nil {
+				return false, err
 			}
-			tlsConfig.Certificates = []tls.Certificate{cer}
+			if resp.StatusCode == http.StatusServiceUnavailable {
+				return false, err
+			}
+			return rhttp.DefaultRetryPolicy(ctx, resp, err)
 		}
-		tr := &http.Transport{
-			TLSClientConfig:   tlsConfig,
-			DisableKeepAlives: false,
+		rhc.Logger = log.New(os.Stderr, "", log.LstdFlags|log.Lshortfile)
+		if schema == "https" {
+			if len(certPath) > 0 && len(certKey) > 0 {
+				cer, err := tls.LoadX509KeyPair(certPath, certKey)
+				if err != nil {
+					log.Printf("%s error loading certs %s", topic, err)
+					return output.FLB_ERROR
+				}
+				tlsConfig.Certificates = []tls.Certificate{cer}
+			}
+			tr := &http.Transport{
+				TLSClientConfig:   tlsConfig,
+				DisableKeepAlives: false,
+			}
+			rhc.HTTPClient = &http.Client{Transport: tr}
 		}
-		client.HTTPClient = &http.Client{Transport: tr}
 	}
 
-	id := topic + "." + strconv.Itoa(instance)
-	cfg[id] = Config{
+	pushed, _ := plugins.LoadOrStore(topic, Config{
 		URL: getURL(schema, host, port, path, topic),
 		Key: key,
-	}
-	log.Printf("[deepfence] deepfence key set %t for id %s", key != "", id)
-	log.Printf("[deepfence] push to url %s", cfg[id].URL)
-	output.FLBPluginSetContext(plugin, id)
+	})
 
-	instance = instance + 1
-	return output.FLB_OK
-}
+	log.Printf("api token set %t for id %s, for url %s", key != "", topic, pushed.(Config).URL)
 
-//export FLBPluginFlush
-func FLBPluginFlush(data unsafe.Pointer, length C.int, tag *C.char) int {
-	log.Printf("[deepfence] flush called on unknown instance")
 	return output.FLB_OK
 }
 
 //export FLBPluginFlushCtx
-func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int {
-	id := output.FLBPluginGetContext(ctx).(string)
-	idCfg, ok := cfg[id]
+func FLBPluginFlushCtx(cid *C.char, data unsafe.Pointer, length C.int) int {
+	id := C.GoString(cid)
+	e, ok := plugins.Load(id)
 	if !ok {
-		log.Printf("[deepfence] push to unknown id topic %s", id)
+		log.Printf("push to unknown id topic %s", id)
 		return output.FLB_ERROR
 	}
-
+	idCfg := e.(Config)
 	// fluentbit decoder
 	dec := output.NewDecoder(data, int(length))
 
@@ -178,7 +192,7 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 	}
 	req.Header.Add("Content-Type", "application/vnd.kafka.json.v2+json")
 
-	resp, err := client.Do(req)
+	resp, err := rhc.Do(req)
 	if err != nil {
 		if os.IsTimeout(err) {
 			// timeout error
@@ -206,24 +220,6 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, tag *C.char) int 
 		return output.FLB_ERROR
 	}
 
-	return output.FLB_OK
-}
-
-//export FLBPluginExit
-func FLBPluginExit() int {
-	log.Printf("[deepfence] exit called on unknown instance")
-	return output.FLB_OK
-}
-
-//export FLBPluginExitCtx
-func FLBPluginExitCtx(ctx unsafe.Pointer) int {
-	id := output.FLBPluginGetContext(ctx).(string)
-	_, ok := cfg[id]
-	if !ok {
-		log.Printf("[deepfence] exit called on unknown id topic %s", id)
-		return output.FLB_ERROR
-	}
-	log.Printf("[deepfence] exit called on id topic %s", id)
 	return output.FLB_OK
 }
 

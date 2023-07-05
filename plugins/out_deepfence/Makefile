@@ -5,7 +5,7 @@ all: out_deepfence.a
 deepfence.o: deepfence.c out_deepfence.h
 	gcc  -I ../../lib/msgpack-c/include -I ../../lib/mpack-amalgamation-1.1/src -I ../../lib/ctraces/include -I ../../lib/cfl/lib/xxhash -I ../../lib/cfl/include/ -I ../../lib/cmetrics/include/ -I ../../lib/c-ares-1.19.0/include/ -I ../../lib/flb_libco/ -I ../../build/lib/monkey/include/monkey -I ../../lib/monkey/include -I ../../include -c deepfence.c -o deepfence.o
 
-vendor:
+vendor: go.mod
 	go mod tidy -v
 	go mod vendor
 

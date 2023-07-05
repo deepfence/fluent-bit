@@ -20,10 +20,10 @@ static int cb_deepfence_init(
     }
 
 	FLBPluginInit(
+		(char*)flb_output_get_property("dftopic", ins),
 		(char*)flb_output_get_property("dfhost", ins),
 		(char*)flb_output_get_property("dfport", ins),
 		(char*)flb_output_get_property("dfpath", ins),
-		(char*)flb_output_get_property("dftopic", ins),
 		(char*)flb_output_get_property("dfschema", ins),
 		(char*)flb_output_get_property("dfkey", ins),
 		(char*)flb_output_get_property("dfcertpath", ins),
@@ -46,7 +46,7 @@ static void cb_deepfence_flush(
     struct flb_deepfence *ctx = (struct flb_deepfence *) out_context;
 
 	int ret = FLBPluginFlushCtx(
-		(char*)flb_output_get_property("id", ctx->ins),
+		(char*)flb_output_get_property("dftopic", ctx->ins),
 		event_chunk->data,
 		event_chunk->size);
 
@@ -73,11 +73,6 @@ static struct flb_config_map config_map[] = {
      "Unique topic config"
     },
     {
-     FLB_CONFIG_MAP_STR, "dfschema", NULL,
-     0, FLB_FALSE, 0,
-     "Schema used for accessing console URL"
-    },
-    {
      FLB_CONFIG_MAP_STR, "dfhost", NULL,
      0, FLB_FALSE, 0,
      "Management Console Host"
@@ -93,9 +88,24 @@ static struct flb_config_map config_map[] = {
      "Path to listen"
     },
     {
+     FLB_CONFIG_MAP_STR, "dfschema", NULL,
+     0, FLB_FALSE, 0,
+     "Schema used for accessing console URL"
+    },
+    {
      FLB_CONFIG_MAP_STR, "dfkey", NULL,
      0, FLB_FALSE, 0,
      "API key from console"
+    },
+    {
+     FLB_CONFIG_MAP_STR, "dfcertpath", NULL,
+     0, FLB_FALSE, 0,
+     "Cert path from console"
+    },
+    {
+     FLB_CONFIG_MAP_STR, "dfcertkey", NULL,
+     0, FLB_FALSE, 0,
+     "Cert key from console"
     },
     /* EOF */
     {0}
