@@ -218,7 +218,7 @@ func FLBPluginInit(cid, chost, cport, cpath, cschema, capiToken, ccertPath, ccer
 		hc = rhc.StandardClient()
 	}
 
-	if dschttp.IsConsoleAgent(host) && strings.Trim(apiToken, "\"") == "" {
+	if dschttp.IsConsoleAgent(host) && (strings.Trim(apiToken, "\"") == "" || strings.Trim(apiToken, "\"") == "-1") {
 		internalURL := os.Getenv("MGMT_CONSOLE_URL_INTERNAL")
 		internalPort := os.Getenv("MGMT_CONSOLE_PORT_INTERNAL")
 		var err error
