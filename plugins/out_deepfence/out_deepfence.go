@@ -224,13 +224,13 @@ func FLBPluginInit(cid, chost, cport, cpath, cschema, capiToken, ccertPath, ccer
 		var err error
 		if apiToken, err = dschttp.GetConsoleApiToken(internalURL, internalPort); err != nil {
 			log.Printf("%s failed: %v", id, err)
-			return output.FLB_ERROR
+			return output.FLB_RETRY
 		}
 	}
 
 	access, refresh, err := Authenticate(getURL(schema, host, port), apiToken)
 	if err != nil {
-		log.Printf("&s failed to authenticate %s", id, err)
+		log.Printf("%s failed to authenticate %v", id, err)
 		return output.FLB_RETRY
 	}
 
