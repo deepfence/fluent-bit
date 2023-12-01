@@ -13,7 +13,9 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
+	"unsafe"
 
 	"C"
 
@@ -23,11 +25,6 @@ import (
 	dsc "github.com/deepfence/golang_deepfence_sdk/client"
 	dschttp "github.com/deepfence/golang_deepfence_sdk/utils/http"
 	rhttp "github.com/hashicorp/go-retryablehttp"
-)
-
-import (
-	"sync"
-	"unsafe"
 )
 
 var (
@@ -100,8 +97,8 @@ func Authenticate(url string, apiToken string) (string, string, error) {
 	apiClient := dsc.NewAPIClient(cfg)
 
 	req := apiClient.AuthenticationAPI.AuthToken(context.Background()).
-		ModelApiAuthRequest(
-			dsc.ModelApiAuthRequest{ApiToken: apiToken},
+		ModelAPIAuthRequest(
+			dsc.ModelAPIAuthRequest{ApiToken: apiToken},
 		)
 
 	resp, _, err := apiClient.AuthenticationAPI.AuthTokenExecute(req)
