@@ -12,7 +12,7 @@ vendor:
 out_deepfence.h: vendor out_deepfence.go
 	go build -buildmode=c-archive -o out_deepfence.a out_deepfence.go
 
-out_deepfence.a: deepfence.o
+out_deepfence.a: vendor  deepfence.o
 	ar r out_deepfence.a deepfence.o
 
 clean:
