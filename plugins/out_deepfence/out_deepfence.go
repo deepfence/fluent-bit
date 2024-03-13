@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"log"
@@ -26,6 +25,7 @@ import (
 	dschttp "github.com/deepfence/golang_deepfence_sdk/utils/http"
 	rhttp "github.com/hashicorp/go-retryablehttp"
 )
+import "crypto/x509"
 
 var (
 	plugins  sync.Map
@@ -181,7 +181,6 @@ func FLBPluginInit(cid, chost, cport, cpath, cschema, capiToken, ccertPath, ccer
 	hc_setup.Lock()
 	defer hc_setup.Unlock()
 	if hc == nil {
-		tlsConfig := &tls.Config{RootCAs: x509.NewCertPool(), InsecureSkipVerify: true}
 		rhc := rhttp.NewClient()
 		rhc.HTTPClient.Timeout = 10 * time.Second
 		rhc.RetryMax = 3
@@ -198,6 +197,10 @@ func FLBPluginInit(cid, chost, cport, cpath, cschema, capiToken, ccertPath, ccer
 		}
 		rhc.Logger = log.New(os.Stderr, "", log.LstdFlags|log.Lshortfile)
 		if schema == "https" {
+			tlsConfig := &tls.Config{
+				RootCAs:            x509.NewCertPool(),
+				InsecureSkipVerify: true,
+			}
 			if len(certPath) > 0 && len(certKey) > 0 {
 				cer, err := tls.LoadX509KeyPair(certPath, certKey)
 				if err != nil {
@@ -206,11 +209,13 @@ func FLBPluginInit(cid, chost, cport, cpath, cschema, capiToken, ccertPath, ccer
 				}
 				tlsConfig.Certificates = []tls.Certificate{cer}
 			}
-			tr := &http.Transport{
-				TLSClientConfig:   tlsConfig,
-				DisableKeepAlives: false,
+			tr := http.DefaultTransport.(*http.Transport).Clone()
+			tr.TLSClientConfig = tlsConfig
+			tr.DisableKeepAlives = false
+			rhc.HTTPClient = &http.Client{
+				Timeout:   10 * time.Second,
+				Transport: tr,
 			}
-			rhc.HTTPClient = &http.Client{Transport: tr}
 		}
 		hc = rhc.StandardClient()
 	}
